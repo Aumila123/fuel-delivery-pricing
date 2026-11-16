@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import NamedTuple, Optional
 
 import config
@@ -12,8 +12,21 @@ class DeliveryPrice(NamedTuple):
     total_tax: Decimal
     grand_total: Decimal
 
+
+def decimal_precision(*values: Decimal, extra: int = 16) -> int:
+    significant_digits = 0
+    positive_adjusted = 0
+    for value in values:
+        if value.is_finite():
+            significant_digits += len(value.as_tuple().digits)
+            positive_adjusted += max(0, value.adjusted())
+    return max(28, significant_digits + positive_adjusted + extra)
+
+
 def round2(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    with localcontext() as context:
+        context.prec = decimal_precision(value)
+        return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 def discount_rate(volume: Decimal) -> Decimal:
     for limit, rate in sorted(config.DISCOUNT_TIERS, reverse=True):
@@ -40,21 +53,25 @@ def calculate_delivery(
         custom_private_vat: Optional[Decimal] = None,
         custom_gasoline_excise: Optional[Decimal] = None,
 ) -> DeliveryPrice:
-    net = round2(base_price * volume * (1-discount_rate(volume)))
+    values = (base_price, volume, distance, custom_private_vat or Decimal(0),
+              custom_gasoline_excise or Decimal(0))
+    with localcontext() as context:
+        context.prec = decimal_precision(*values, extra=32)
+        net = round2(base_price * volume * (1-discount_rate(volume)))
 
-    logistics = round2(distance * config.DELIVERY_PRICE_PER_KM)
-    if volume < config.SMALL_LOAD_LIMIT:
-        logistics += config.SMALL_LOAD_PRICE
+        logistics = round2(distance * config.DELIVERY_PRICE_PER_KM)
+        if volume < config.SMALL_LOAD_LIMIT:
+            logistics += config.SMALL_LOAD_PRICE
 
-    excise_rate = config.EXCISE_PER_LITER[fuel_type]
-    if fuel_type == "GASOLINE" and custom_gasoline_excise is not None:
-        excise_rate = custom_gasoline_excise
-    excise = round2(excise_rate * volume)
+        excise_rate = config.EXCISE_PER_LITER[fuel_type]
+        if fuel_type == "GASOLINE" and custom_gasoline_excise is not None:
+            excise_rate = custom_gasoline_excise
+        excise = round2(excise_rate * volume)
 
-    rate = vat_rate(client, delivery_date, custom_private_vat)
-    vat = round2(rate * (net + logistics + excise))
+        rate = vat_rate(client, delivery_date, custom_private_vat)
+        vat = round2(rate * (net + logistics + excise))
 
-    total_tax = excise + vat
-    grand_total = net + logistics + total_tax
+        total_tax = excise + vat
+        grand_total = net + logistics + total_tax
 
-    return DeliveryPrice(net, logistics, excise, vat, total_tax, grand_total)
+        return DeliveryPrice(net, logistics, excise, vat, total_tax, grand_total)

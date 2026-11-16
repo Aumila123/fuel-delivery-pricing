@@ -7,7 +7,8 @@ from validation import parse_date, validate_record
 
 
 def good(**changes):
-    record = {"id": "a1", "type": "DIESEL", "client": "PRIVATE", "date": "2024-02-10",
+    record = {"id": "123e4567-e89b-12d3-a456-426614174000", "type": "DIESEL",
+              "client": "PRIVATE", "date": "2024-02-10",
               "volume": 2000, "distance": 40, "basePrice": D("0.9")}
     record.update(changes)
     return record
@@ -76,19 +77,23 @@ def test_invalid_value():
     assert err(good(volume=float("nan"))) == "INVALID_VALUE"
     assert err(good(volume=float("inf"))) == "INVALID_VALUE"
     assert err(good(id=123)) == "INVALID_VALUE"
+    assert err(good(id="not-a-uuid")) == "INVALID_VALUE"
 
 
 def test_duplicates():
     seen = set()
-    assert err(good(id="X"), seen) is None
-    assert err(good(id="X"), seen) == "DUPLICATE_ID"
-    assert err(good(id="x"), seen) is None
+    first = "123e4567-e89b-12d3-a456-426614174001"
+    second = "123E4567-E89B-12D3-A456-426614174001"
+    assert err(good(id=first), seen) is None
+    assert err(good(id=first), seen) == "DUPLICATE_ID"
+    assert err(good(id=second), seen) is None
 
 
 def test_duplicate_of_invalid_first_record():
     seen = set()
-    assert err(good(id="Y", type="KEROSENE"), seen) == "UNKNOWN_TYPE"
-    assert err(good(id="Y"), seen) == "DUPLICATE_ID"
+    shipment_id = "123e4567-e89b-12d3-a456-426614174002"
+    assert err(good(id=shipment_id, type="KEROSENE"), seen) == "UNKNOWN_TYPE"
+    assert err(good(id=shipment_id), seen) == "DUPLICATE_ID"
 
 
 def test_one_code_per_record():

@@ -69,6 +69,14 @@ def test_vat_change_date():
     assert new.vat == D("1529.50")
 
 
+def test_large_valid_amounts_do_not_overflow_decimal_context():
+    amount = D("12345678901234567890123456789")
+    r = calculate_delivery("DIESEL", "PRIVATE", date(2024, 1, 1),
+                           D("1"), D("0"), amount)
+    assert r.net_fuel_price == D("12345678901234567890123456789.00")
+    assert r.grand_total.is_finite()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for t in tests:

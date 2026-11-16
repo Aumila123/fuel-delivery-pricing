@@ -3,9 +3,8 @@ import json
 import os
 import sys
 import re
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
-import bonus
 import bonus
 import pricing
 import validation
@@ -24,12 +23,20 @@ PROMPT_END = "Enter End Date (YYYY-MM-DD or DD/MM/YYYY): "
 _NUMBER = re.compile(r"\+?(\d+(\.\d*)?|\.\d+)", re.ASCII)
 
 def load_json(path):
-    try:
-        with open(path, encoding="utf-8-sig") as f:
-            return json.load(f, parse_float=Decimal)
-    except (OSError, ValueError) as error:
-        print(f"Cannot read {path}: {error}", file=sys.stderr)
-        return None
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON object key: {key!r}")
+            result[key] = value
+        return result
+
+    def reject_nonstandard_constant(value):
+        raise ValueError(f"invalid JSON numeric constant: {value}")
+
+    with open(path, encoding="utf-8-sig") as f:
+        return json.load(f, parse_float=Decimal, object_pairs_hook=reject_duplicate_keys,
+                         parse_constant=reject_nonstandard_constant)
 
 
 def write_csv(filename, header, rows):
@@ -91,7 +98,10 @@ def run_task2(shipments):
     except EOFError:
         print("Input ended, Task 2 skipped.", file=sys.stderr)
         return None
-    priced = price_all(shipments, vat_percent / 100, gasoline_excise)  
+    with localcontext() as context:
+        context.prec = pricing.decimal_precision(vat_percent, extra=4)
+        custom_vat_rate = vat_percent / 100
+    priced = price_all(shipments, custom_vat_rate, gasoline_excise)
     write_csv("task2.csv", PRICE_HEADER, price_rows(priced))
     return priced
 
@@ -120,10 +130,17 @@ def run_bonus1(priced):
               [[str(count), best_id, money(total_vat)]])
 
 def run_bonus2(priced):
-    """Uses the Task 1 results and payments.json (a missing file means: nobody paid)."""
-    payments = load_json(PAYMENTS_FILE)
-    if not isinstance(payments, list):
+    try:
+        payments = load_json(PAYMENTS_FILE)
+    except FileNotFoundError:
         payments = []
+    except (OSError, ValueError, RecursionError) as error:
+        print(f"Cannot read {PAYMENTS_FILE}: {error}; Bonus 2 skipped.", file=sys.stderr)
+        return
+    if not isinstance(payments, list):
+        print(f"Invalid {PAYMENTS_FILE}: expected a JSON array; Bonus 2 skipped.",
+              file=sys.stderr)
+        return
     paid_dates = bonus.first_usable_payments(payments, {s.id for s, _ in priced})
     rows = []
     for shipment, price in priced:
@@ -133,9 +150,16 @@ def run_bonus2(priced):
     write_csv("bonus2.csv", ["ShipmentID", "DueDate", "DaysLate", "LateInterest"], rows)
 
 def main():
-    records = load_json(SHIPMENTS_FILE)
+    try:
+        records = load_json(SHIPMENTS_FILE)
+    except (OSError, ValueError, RecursionError) as error:
+        print(f"Cannot read {SHIPMENTS_FILE}: {error}; processing stopped.",
+              file=sys.stderr)
+        return
     if not isinstance(records, list):
-        records = []
+        print(f"Invalid {SHIPMENTS_FILE}: expected a JSON array; processing stopped.",
+              file=sys.stderr)
+        return
     shipments, errors = split_records(records)
 
     write_csv("errors.csv", ["ShipmentID", "ErrorCode"], errors)

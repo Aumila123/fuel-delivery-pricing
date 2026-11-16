@@ -50,11 +50,16 @@ def test_rate_change_boundary():
     assert r.days_late == 2 and r.interest == D("0.21")
 
 
+def test_interest_rounds_once_across_rate_periods():
+    r = bonus.late_interest(D("6.09"), date(2024, 5, 30), date(2024, 7, 2))
+    assert r.days_late == 3 and r.interest == D("0.01")
+
+
 def test_unpaid_uses_report_date():
     r = bonus.late_interest(D("1006.14"), date(2024, 2, 29), None)   # due 2024-03-30, report 2024-07-20
     assert r.days_late == 112
-    expected = D("1006.14") * D("0.12") * 92 / 365, D("1006.14") * D("0.09") * 20 / 365
-    assert r.interest == sum((e.quantize(D("0.01"), rounding="ROUND_HALF_UP") for e in expected), D("0"))
+    expected = D("1006.14") * (D("0.12") * 92 + D("0.09") * 20) / 365
+    assert r.interest == expected.quantize(D("0.01"), rounding="ROUND_HALF_UP")
 
 
 def test_first_usable_payment():
@@ -71,6 +76,12 @@ def test_first_usable_payment():
 def test_last_calendar_day_does_not_crash():
     r = bonus.late_interest(D("100"), date(9999, 12, 31), None)
     assert r.days_late == 0
+
+
+def test_large_grand_total_late_interest():
+    amount = D("12345678901234567890123456789.00")
+    r = bonus.late_interest(amount, date(2024, 1, 1), date(2024, 2, 1))
+    assert r.interest.is_finite()
 
 
 if __name__ == "__main__":

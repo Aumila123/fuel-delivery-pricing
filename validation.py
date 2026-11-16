@@ -2,6 +2,7 @@ import re
 from datetime import date
 from decimal import Decimal
 from typing import Any, NamedTuple, Optional, Set
+from uuid import UUID
 import config
 
 MISSING_FIELD = "MISSING_FIELD"
@@ -17,6 +18,11 @@ VALID_CLIENTS = {"PRIVATE", "EXEMPT"}
 
 _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})", re.ASCII)
 _EU_DATE = re.compile(r"(\d{2})/(\d{2})/(\d{4})", re.ASCII)
+_UUID_TEXT = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    re.ASCII,
+)
 
 
 class Shipment(NamedTuple):
@@ -83,6 +89,12 @@ def validate_record(record: Any, seen_ids: Set[str]) -> Result:
         return Result(None, MISSING_FIELD, shipment_id)
 
     if not isinstance(raw_id, str):
+        return Result(None, INVALID_VALUE, shipment_id)
+    if not _UUID_TEXT.fullmatch(raw_id):
+        return Result(None, INVALID_VALUE, shipment_id)
+    try:
+        UUID(raw_id)
+    except ValueError:
         return Result(None, INVALID_VALUE, shipment_id)
 
     raw_type = record["type"]

@@ -1,9 +1,9 @@
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 import config
-from pricing import DeliveryPrice, round2
+from pricing import DeliveryPrice, decimal_precision, round2
 from validation import Shipment, parse_date
 
 # ---------- Bonus 1 ----------
@@ -11,9 +11,6 @@ from validation import Shipment, parse_date
 def summarize_range(
     priced: Iterable[Tuple[Shipment, DeliveryPrice]], start: date, end: date
 ) -> Tuple[int, str, Decimal]:
-    """-> (number of deliveries in range, id of the highest GrandTotal, total VAT).
-    Both dates are included. Ties go to the first delivery in the file.
-    No delivery in range -> (0, 'N/A', 0.00)."""
     count = 0
     best_id = "N/A"
     best_total = None
@@ -21,7 +18,9 @@ def summarize_range(
     for shipment, price in priced:
         if start <= shipment.date <= end:
             count += 1
-            total_vat += price.vat
+            with localcontext() as context:
+                context.prec = max(context.prec, decimal_precision(total_vat, price.vat))
+                total_vat += price.vat
             if best_total is None or price.grand_total > best_total:
                 best_total = price.grand_total
                 best_id = shipment.id
@@ -61,8 +60,13 @@ def late_interest(grand_total: Decimal, delivery_date: date,
     old_rate_days = max(0, (min(end, last_old_rate_day) - due).days)
     new_rate_days = days_late - old_rate_days
 
-    interest = Decimal("0.00")
-    for days, rate in ((old_rate_days, config.LATE_RATE_BEFORE),
-                       (new_rate_days, config.LATE_RATE_FROM)):
-        interest += round2(grand_total * rate * days / config.DAYS_IN_YEAR)
+    with localcontext() as context:
+        context.prec = decimal_precision(grand_total, extra=32)
+        weighted_rate_days = (
+            config.LATE_RATE_BEFORE * old_rate_days
+            + config.LATE_RATE_FROM * new_rate_days
+        )
+        interest = round2(
+            grand_total * weighted_rate_days / config.DAYS_IN_YEAR
+        )
     return LateInterest(due, days_late, interest)
